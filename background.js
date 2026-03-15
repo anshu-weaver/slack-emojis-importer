@@ -51,10 +51,19 @@ async function handleSearch(query) {
 }
 
 async function searchSlackmojis(query) {
-  var urls = [
-    "https://slackmojis.com/emojis/popular",
-    "https://slackmojis.com/emojis/recent",
-  ];
+  var urls;
+  if (query) {
+    // Use the search endpoint when there's a query
+    urls = [
+      "https://slackmojis.com/emojis/search?query=" + encodeURIComponent(query),
+    ];
+  } else {
+    // Default: load popular and recent
+    urls = [
+      "https://slackmojis.com/emojis/popular",
+      "https://slackmojis.com/emojis/recent",
+    ];
+  }
 
   var emojis = [];
 
@@ -72,13 +81,6 @@ async function searchSlackmojis(query) {
     }
   }
 
-  if (query) {
-    var q = query.toLowerCase();
-    return emojis.filter(function (e) {
-      return e.name.toLowerCase().indexOf(q) >= 0 ||
-        (e.tags && e.tags.toLowerCase().indexOf(q) >= 0);
-    });
-  }
   return emojis;
 }
 
@@ -96,7 +98,17 @@ function parseSlackmojisHTML(html) {
   var liRegex =
     /<li[^>]*class='emoji[^']*'[^>]*>[\s\S]*?<a[^>]*href="([^"]*\/download)"[^>]*>[\s\S]*?<img[^>]*src="([^"]*)"[^>]*>[\s\S]*?:([a-zA-Z0-9_-]+):[\s\S]*?<\/a>\s*<\/li>/gi;
   var match;
+  var nameCount = {};
   while ((match = liRegex.exec(html)) !== null) {
+    var name = match[3].trim();
+    // Track duplicates and make names unique using the emoji ID from the URL
+    nameCount[name] = (nameCount[name] || 0) + 1;
+    var displayName = name;
+    if (nameCount[name] > 1) {
+      // Extract ID from download URL like /emojis/10418-nice/download
+      var idMatch = match[1].match(/\/emojis\/(\d+)-/);
+      displayName = idMatch ? name + "_" + idMatch[1] : name + "_" + nameCount[name];
+    }
     emojis.push({
       source: "slackmojis",
       downloadUrl: match[1].indexOf("http") === 0
@@ -104,8 +116,8 @@ function parseSlackmojisHTML(html) {
         : "https://slackmojis.com" + match[1],
       imageUrl: match[2],
       alt: "",
-      tags: "",
-      name: match[3].trim(),
+      tags: name,
+      name: displayName,
     });
   }
 
