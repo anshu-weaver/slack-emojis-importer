@@ -3,11 +3,14 @@
 (function () {
   "use strict";
 
+  console.log("[Emoji Importer] Content script loaded on: " + window.location.href);
+
   // Safe DOM element creation helper
   function createElement(tag, attrs, children) {
-    const el = document.createElement(tag);
+    var el = document.createElement(tag);
     if (attrs) {
-      Object.entries(attrs).forEach(([key, value]) => {
+      Object.keys(attrs).forEach(function (key) {
+        var value = attrs[key];
         if (key === "textContent") {
           el.textContent = value;
         } else if (key === "className") {
@@ -20,7 +23,7 @@
       });
     }
     if (children) {
-      children.forEach((child) => {
+      children.forEach(function (child) {
         if (typeof child === "string") {
           el.appendChild(document.createTextNode(child));
         } else if (child) {
@@ -31,59 +34,72 @@
     return el;
   }
 
+  // Send message to background script with error handling
+  function sendBgMessage(msg) {
+    return new Promise(function (resolve, reject) {
+      if (!chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
+        reject(new Error("Extension runtime not available"));
+        return;
+      }
+      chrome.runtime.sendMessage(msg, function (response) {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        resolve(response);
+      });
+    });
+  }
+
   // Extract Slack API credentials from the page's boot_data
   function getSlackApiData() {
-    const scripts = document.querySelectorAll('script[type="text/javascript"]');
-    let apiToken = null;
-    let versionUid = null;
+    var scripts = document.querySelectorAll('script[type="text/javascript"]');
+    var apiToken = null;
+    var versionUid = null;
 
-    for (const script of scripts) {
-      const text = script.textContent;
+    for (var i = 0; i < scripts.length; i++) {
+      var text = scripts[i].textContent;
       if (!text) continue;
 
-      const tokenMatch = text.match(/"?api_token"?\s*:\s*"(.+?)"/);
+      var tokenMatch = text.match(/"?api_token"?\s*:\s*"(.+?)"/);
       if (tokenMatch) apiToken = tokenMatch[1];
 
-      const versionMatch = text.match(/"?version_uid"?\s*:\s*"(.+?)"/);
+      var versionMatch = text.match(/"?version_uid"?\s*:\s*"(.+?)"/);
       if (versionMatch) versionUid = versionMatch[1];
 
       if (apiToken && versionUid) break;
     }
 
-    return { apiToken, versionUid };
+    return { apiToken: apiToken, versionUid: versionUid };
   }
 
   // Upload an emoji to Slack
   async function uploadEmoji(name, imageDataUrl, imageType) {
-    const { apiToken, versionUid } = getSlackApiData();
-    if (!apiToken) {
+    var data = getSlackApiData();
+    if (!data.apiToken) {
       throw new Error(
         "Could not find Slack API token. Make sure you are on the emoji customization page."
       );
     }
 
     // Convert data URL to blob
-    const response = await fetch(imageDataUrl);
-    const blob = await response.blob();
+    var response = await fetch(imageDataUrl);
+    var blob = await response.blob();
 
-    const ext = imageType.includes("gif")
-      ? "gif"
-      : imageType.includes("png")
-        ? "png"
-        : "png";
-    const file = new File([blob], name + "." + ext, { type: imageType });
+    var ext = imageType.indexOf("gif") >= 0 ? "gif" : "png";
+    var file = new File([blob], name + "." + ext, { type: imageType });
 
-    const formData = new FormData();
+    var formData = new FormData();
     formData.append("name", name);
     formData.append("mode", "data");
-    formData.append("token", apiToken);
+    formData.append("token", data.apiToken);
     formData.append("image", file);
 
-    const xId = versionUid
-      ? versionUid.substring(0, 8) + "-" + Date.now()
+    var xId = data.versionUid
+      ? data.versionUid.substring(0, 8) + "-" + Date.now()
       : Date.now().toString();
 
-    const uploadResponse = await fetch(
+    var uploadResponse = await fetch(
       window.location.origin + "/api/emoji.add?_x_id=" + xId,
       {
         method: "POST",
@@ -92,68 +108,73 @@
       }
     );
 
-    const result = await uploadResponse.json();
+    var result = await uploadResponse.json();
     if (!result.ok) {
       throw new Error(result.error || "Upload failed");
     }
     return result;
   }
 
-  // Build and inject the UI
+  // --- UI ---
+
   function injectUI() {
-    const wrapper = document.querySelector(".p-customize_emoji_wrapper");
+    var wrapper = document.querySelector(".p-customize_emoji_wrapper");
     if (!wrapper) {
+      console.log("[Emoji Importer] Wrapper not found, retrying in 1s...");
       setTimeout(injectUI, 1000);
       return;
     }
 
     if (document.getElementById("sei-container")) return;
 
-    const searchInput = createElement("input", {
+    console.log("[Emoji Importer] Injecting UI before wrapper");
+
+    var searchInput = createElement("input", {
       type: "text",
       id: "sei-search-input",
       placeholder: "Search emojis (e.g. party, cat, fire...)",
       autocomplete: "off",
     });
 
-    const searchBtn = createElement("button", {
+    var searchBtn = createElement("button", {
       id: "sei-search-btn",
       textContent: "Search",
     });
 
-    const slackmojisCheckbox = createElement("input", {
+    var slackmojisCheckbox = createElement("input", {
       type: "checkbox",
       id: "sei-source-slackmojis",
-      checked: "",
     });
     slackmojisCheckbox.checked = true;
 
-    const slackemojiCheckbox = createElement("input", {
+    var slackemojiCheckbox = createElement("input", {
       type: "checkbox",
       id: "sei-source-slackemoji",
-      checked: "",
     });
     slackemojiCheckbox.checked = true;
 
-    const statusDiv = createElement("div", {
+    var statusDiv = createElement("div", {
       id: "sei-status",
       className: "sei-status",
     });
-    const resultsDiv = createElement("div", {
+    var resultsDiv = createElement("div", {
       id: "sei-results",
       className: "sei-results",
     });
 
-    const spinner = createElement("div", { className: "sei-spinner" });
-    const loadingDiv = createElement(
+    var spinner = createElement("div", { className: "sei-spinner" });
+    var loadingDiv = createElement(
       "div",
       { id: "sei-loading", className: "sei-loading", style: "display:none" },
       [spinner, " Searching..."]
     );
 
-    const container = createElement("div", { id: "sei-container" }, [
+    var container = createElement("div", { id: "sei-container" }, [
       createElement("div", { className: "sei-header" }, [
-        createElement("h2", { className: "sei-title", textContent: "Emoji Importer" }),
+        createElement("h2", {
+          className: "sei-title",
+          textContent: "Emoji Importer",
+        }),
         createElement("p", {
           className: "sei-subtitle",
           textContent:
@@ -175,45 +196,65 @@
 
     wrapper.parentNode.insertBefore(container, wrapper);
 
-    // Wire up event handlers
-    searchBtn.addEventListener("click", () => performSearch());
-    searchInput.addEventListener("keydown", (e) => {
+    searchBtn.addEventListener("click", function () {
+      performSearch();
+    });
+    searchInput.addEventListener("keydown", function (e) {
       if (e.key === "Enter") performSearch();
     });
 
-    // Default search
-    performSearch("popular");
+    // Load popular emojis by default (empty query = return all from popular pages)
+    performSearch("");
   }
 
-  let currentSearchId = 0;
+  var currentSearchId = 0;
 
   async function performSearch(overrideQuery) {
-    const query =
+    var query =
       overrideQuery ||
       document.getElementById("sei-search-input").value.trim();
-    const resultsDiv = document.getElementById("sei-results");
-    const loadingDiv = document.getElementById("sei-loading");
-    const statusDiv = document.getElementById("sei-status");
-    const showSlackmojis = document.getElementById("sei-source-slackmojis").checked;
-    const showSlackemoji = document.getElementById("sei-source-slackemoji").checked;
+    var resultsDiv = document.getElementById("sei-results");
+    var loadingDiv = document.getElementById("sei-loading");
+    var statusDiv = document.getElementById("sei-status");
+    var showSlackmojis = document.getElementById(
+      "sei-source-slackmojis"
+    ).checked;
+    var showSlackemoji = document.getElementById(
+      "sei-source-slackemoji"
+    ).checked;
 
-    const searchId = ++currentSearchId;
+    var searchId = ++currentSearchId;
 
     resultsDiv.textContent = "";
     statusDiv.textContent = "";
     loadingDiv.style.display = "flex";
 
+    console.log("[Emoji Importer] Searching for: " + query);
+
     try {
-      const response = await chrome.runtime.sendMessage({
+      var response = await sendBgMessage({
         action: "searchEmojis",
         query: query,
       });
+
+      console.log("[Emoji Importer] Got response:", response);
 
       if (searchId !== currentSearchId) return;
 
       loadingDiv.style.display = "none";
 
-      let allResults = [];
+      if (!response) {
+        statusDiv.textContent =
+          "Error: No response from background script. Try reloading the extension.";
+        return;
+      }
+
+      if (response.error) {
+        statusDiv.textContent = "Search error: " + response.error;
+        return;
+      }
+
+      var allResults = [];
       if (showSlackmojis && response.slackmojis) {
         allResults = allResults.concat(response.slackmojis);
       }
@@ -222,22 +263,27 @@
       }
 
       // Deduplicate by name
-      const seen = new Set();
-      allResults = allResults.filter((e) => {
-        if (seen.has(e.name)) return false;
-        seen.add(e.name);
+      var seen = {};
+      allResults = allResults.filter(function (e) {
+        if (seen[e.name]) return false;
+        seen[e.name] = true;
         return true;
       });
 
+      console.log("[Emoji Importer] Total results: " + allResults.length);
+
       if (allResults.length === 0) {
-        statusDiv.textContent = "No emojis found. Try a different search term.";
+        statusDiv.textContent =
+          "No emojis found. Try a different search term.";
         return;
       }
 
-      statusDiv.textContent =
-        "Found " + allResults.length + ' emojis for "' + query + '"';
+      statusDiv.textContent = query
+        ? "Found " + allResults.length + ' emojis for "' + query + '"'
+        : "Showing " + allResults.length + " popular emojis";
       renderResults(allResults, resultsDiv);
     } catch (err) {
+      console.error("[Emoji Importer] Search failed:", err);
       loadingDiv.style.display = "none";
       statusDiv.textContent = "Search failed: " + err.message;
     }
@@ -246,21 +292,23 @@
   function renderResults(emojis, resultsDiv) {
     resultsDiv.textContent = "";
 
-    emojis.forEach((emoji) => {
-      const img = createElement("img", {
+    emojis.forEach(function (emoji) {
+      var img = createElement("img", {
         src: emoji.imageUrl,
         alt: emoji.name,
         loading: "lazy",
       });
 
-      const addBtn = createElement("button", {
+      var addBtn = createElement("button", {
         className: "sei-add-btn",
         textContent: "Add to Slack",
       });
 
-      addBtn.addEventListener("click", () => handleAddEmoji(addBtn, emoji));
+      addBtn.addEventListener("click", function () {
+        handleAddEmoji(addBtn, emoji);
+      });
 
-      const card = createElement("div", { className: "sei-emoji-card" }, [
+      var card = createElement("div", { className: "sei-emoji-card" }, [
         createElement("div", { className: "sei-emoji-preview" }, [img]),
         createElement("div", {
           className: "sei-emoji-name",
@@ -278,13 +326,13 @@
   }
 
   async function handleAddEmoji(button, emoji) {
-    const originalText = button.textContent;
+    var originalText = button.textContent;
     button.textContent = "Downloading...";
     button.disabled = true;
     button.classList.add("sei-uploading");
 
     try {
-      const imageData = await chrome.runtime.sendMessage({
+      var imageData = await sendBgMessage({
         action: "fetchImage",
         url: emoji.downloadUrl || emoji.imageUrl,
       });
@@ -295,7 +343,7 @@
 
       button.textContent = "Uploading...";
 
-      const cleanName = emoji.name
+      var cleanName = emoji.name
         .toLowerCase()
         .replace(/[^a-z0-9_-]/g, "_")
         .replace(/^_+|_+$/g, "");
@@ -306,12 +354,13 @@
       button.classList.remove("sei-uploading");
       button.classList.add("sei-success");
     } catch (err) {
+      console.error("[Emoji Importer] Upload error:", err);
       button.textContent = "Failed";
       button.classList.remove("sei-uploading");
       button.classList.add("sei-error");
       button.title = err.message;
 
-      setTimeout(() => {
+      setTimeout(function () {
         button.textContent = originalText;
         button.disabled = false;
         button.classList.remove("sei-error");
