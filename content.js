@@ -115,6 +115,45 @@
     return result;
   }
 
+  // --- Existing emoji tracking ---
+
+  var existingEmojis = {}; // name -> true
+
+  async function loadExistingEmojis() {
+    var data = getSlackApiData();
+    if (!data.apiToken) return;
+
+    try {
+      var formData = new FormData();
+      formData.append("token", data.apiToken);
+      var response = await fetch(
+        window.location.origin + "/api/emoji.list",
+        { method: "POST", body: formData, credentials: "include" }
+      );
+      var result = await response.json();
+      if (result.ok && result.emoji) {
+        Object.keys(result.emoji).forEach(function (name) {
+          existingEmojis[name] = true;
+        });
+        console.log(
+          "[Emoji Importer] Loaded " +
+            Object.keys(existingEmojis).length +
+            " existing emojis"
+        );
+      }
+    } catch (e) {
+      console.error("[Emoji Importer] Failed to load existing emojis:", e);
+    }
+  }
+
+  function isEmojiExisting(name) {
+    var cleanName = name
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]/g, "_")
+      .replace(/^_+|_+$/g, "");
+    return !!existingEmojis[cleanName];
+  }
+
   // --- UI ---
 
   function injectUI() {
@@ -203,8 +242,10 @@
       if (e.key === "Enter") performSearch();
     });
 
-    // Load popular emojis by default (empty query = return all from popular pages)
-    performSearch("");
+    // Load existing workspace emojis, then show popular emojis
+    loadExistingEmojis().then(function () {
+      performSearch("");
+    });
   }
 
   var currentSearchId = 0;
@@ -299,14 +340,20 @@
         loading: "lazy",
       });
 
+      var alreadyExists = isEmojiExisting(emoji.name);
+
       var addBtn = createElement("button", {
-        className: "sei-add-btn",
-        textContent: "Add to Slack",
+        className: alreadyExists ? "sei-add-btn sei-success" : "sei-add-btn",
+        textContent: alreadyExists ? "Added!" : "Add to Slack",
       });
 
-      addBtn.addEventListener("click", function () {
-        handleAddEmoji(addBtn, emoji);
-      });
+      if (alreadyExists) {
+        addBtn.disabled = true;
+      } else {
+        addBtn.addEventListener("click", function () {
+          handleAddEmoji(addBtn, emoji);
+        });
+      }
 
       var card = createElement("div", { className: "sei-emoji-card" }, [
         createElement("div", { className: "sei-emoji-preview" }, [img]),
@@ -349,6 +396,9 @@
         .replace(/^_+|_+$/g, "");
 
       await uploadEmoji(cleanName, imageData.dataUrl, imageData.type);
+
+      // Track the newly added emoji
+      existingEmojis[cleanName] = true;
 
       button.textContent = "Added!";
       button.classList.remove("sei-uploading");
